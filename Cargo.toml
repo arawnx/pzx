@@ -6,5 +6,3 @@ edition = "2018"
 
 [dependencies]
 ncurses = "5.99.0"
-isatty = "0.1"
-raw_tty = "0.1.0"

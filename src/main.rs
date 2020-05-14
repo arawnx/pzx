@@ -4,24 +4,15 @@
 #![allow(dead_code)]
 
 extern crate ncurses;
-extern crate isatty;
-extern crate raw_tty;
 
 use std::str;
 use std::env;
-use std::io::{self, Read, Write, stdin};
 use std::collections::HashMap;
-
-use raw_tty::IntoRawMode;
-use std::fs;
-use isatty::*;
 
 use ncurses::*;
 
 fn main() {
-
     init();
-
     let global_vars = global_variables();
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -31,7 +22,6 @@ fn main() {
     let commands = &args[1];
     let tokens = derive_tokens(commands);
     let ret = parse_tokens(&tokens, global_vars);
-
     terminate();
 
     println!("{}", ret);
@@ -41,9 +31,14 @@ fn init() {
     initscr();
     curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
     cbreak();
-    start_color();
     keypad(stdscr(), true); 
-    // noecho();
+    noecho();
+
+    if has_colors() && can_change_color() {
+        start_color();
+    }
+
+    clear();
 }
 
 fn terminate() {
@@ -61,6 +56,7 @@ enum Operator {
     Shift,
     StringAssign,
     NumberAssign,
+    ColorAssign,
 }
 
 #[derive(Eq, PartialEq, Debug)]
@@ -124,10 +120,42 @@ fn parse_tokens(tokens: &Vec<Token>, global_vars: HashMap<String, Variable>) -> 
                 }
             },
             Token::Operator(Operator::Foreground) => {
-                // TODO : Setup color manipulation
+                if let Token::Identifier(var) = &tokens[i+1] {
+                    change_foreground(&variables.get(var).unwrap()).expect("Err: Could not change foreground color");
+                } else if let Token::Literal(r_raw) = &tokens[i+1] {
+                    let mut r: i16 = 0;
+                    let mut g: i16 = 0;
+                    let mut b: i16 = 0;
+                    r = r_raw.parse::<i16>().expect("Err: Color literal not composed of digits");
+                    if let Token::Literal(g_raw) = &tokens[i+2] {
+                        g = g_raw.parse::<i16>().expect("Err: Color literal not composed of digits");
+                    }
+                    if let Token::Literal(b_raw) = &tokens[i+3] {
+                        b = b_raw.parse::<i16>().expect("Err: Color literal not composed of digits");
+                    }
+                    change_foreground(&Variable::Clr{r, g, b}).expect("Err: Could not change foreground color");
+                } else {
+                    panic!("Err: Improper operand provided to FORE operator");
+                }
             },
             Token::Operator(Operator::Background) => {
-                // TODO : Setup color manipulation
+                if let Token::Identifier(var) = &tokens[i+1] {
+                    change_background(&variables.get(var).unwrap()).expect("Err: Could not change foreground color");
+                } else if let Token::Literal(r_raw) = &tokens[i+1] {
+                    let mut r: i16 = 0;
+                    let mut g: i16 = 0;
+                    let mut b: i16 = 0;
+                    r = r_raw.parse::<i16>().expect("Err: Color literal not composed of digits");
+                    if let Token::Literal(g_raw) = &tokens[i+2] {
+                        g = g_raw.parse::<i16>().expect("Err: Color literal not composed of digits");
+                    }
+                    if let Token::Literal(b_raw) = &tokens[i+3] {
+                        b = b_raw.parse::<i16>().expect("Err: Color literal not composed of digits");
+                    }
+                    change_background(&Variable::Clr{r, g, b}).expect("Err: Could not change foreground color");
+                } else {
+                    panic!("Err: Improper operand provided to FORE operator");
+                }
             },
             Token::Operator(Operator::Move) => {
                 // First get the desired position
@@ -256,6 +284,38 @@ fn parse_tokens(tokens: &Vec<Token>, global_vars: HashMap<String, Variable>) -> 
                     *variables.get_mut(var).unwrap() = Variable::Num(value);
                 }
             },
+            Token::Operator(Operator::ColorAssign) => {
+                let mut r: i16 = 0;
+                let mut g: i16 = 0;
+                let mut b: i16 = 0;
+                let mut name = String::new();
+
+                if let Token::Identifier(s) = &tokens[i+1] {
+                    name = s.to_owned();
+                } else {
+                    panic!("Err: Improper operand provided to CLR operator");
+                }
+
+                if let Token::Literal(r_var) = &tokens[i+2] {
+                    r = r_var.parse::<i16>().expect("Err: Improper operand provided to CLR operator");
+                } else {
+                    panic!("Err: Improper operand provided to CLR operator");
+                }
+
+                if let Token::Literal(g_var) = &tokens[i+3] {
+                    g = g_var.parse::<i16>().expect("Err: Improper operand provided to CLR operator");
+                } else {
+                    panic!("Err: Improper operand provided to CLR operator");
+                }
+
+                if let Token::Literal(b_var) = &tokens[i+4] {
+                    b = b_var.parse::<i16>().expect("Err: Improper operand provided to CLR operator");
+                } else {
+                    panic!("Err: Improper operand provided to CLR operator");
+                }
+
+                variables.insert(name, Variable::Clr{r, g, b});
+            },
             Token::Identifier(_) => {
                 continue;
             },
@@ -275,6 +335,36 @@ fn parse_tokens(tokens: &Vec<Token>, global_vars: HashMap<String, Variable>) -> 
     }
 }
 
+fn change_foreground(color: &Variable) -> Result<(), ()> {
+    if let Variable::Clr{r, g, b} = color {
+        init_color(16, *r, *g, *b);
+    } else {
+        return Err(());
+    }
+
+    return Ok(());
+}
+
+fn change_background(color: &Variable) -> Result<(), ()> {
+    if let Variable::Clr{r, g, b} = color {
+        init_color(17, *r, *g, *b);
+    } else {
+        return Err(());
+    }
+
+    return Ok(());
+}
+
+fn update_color_pairs(foreground: &Variable, background: &Variable) {
+    change_foreground(foreground).expect("Could not change foreground color");
+    change_background(background).expect("Could not change background color");
+
+    init_pair(1, 16, 17);
+    bkgd(' ' as chtype | COLOR_PAIR(1) as chtype);
+    attron(COLOR_PAIR(1));
+    clear();
+}
+
 fn global_variables() -> HashMap<String, Variable> {
     let mut res: HashMap<String, Variable> = HashMap::new();
     // Cursor position 
@@ -283,13 +373,11 @@ fn global_variables() -> HashMap<String, Variable> {
     // Screen-relative positions
     res.insert("G".to_owned(), Variable::Num(LINES()-1));
     res.insert("$".to_owned(), Variable::Num(COLS()-1));
+    // Colors
+    res.insert("foreground".to_owned(), Variable::Clr{r: 1000, g: 1000, b: 1000});
+    res.insert("background".to_owned(), Variable::Clr{r: 0, g: 0, b: 0});
+    update_color_pairs(res.get("foreground").unwrap(), res.get("background").unwrap());
     // Standard output
-    if !stdin_isatty() { // If data was piped in
-        let mut buf = String::new();
-        io::stdin().read_line(&mut buf);
-        println!("{}", buf);
-        res.insert("in".to_owned(), Variable::Str(buf));
-    }
     res.insert("out".to_owned(), Variable::Str(String::new()));
     return res;
 }
@@ -374,6 +462,9 @@ fn assemble_token(raw: &str, context: &Vec<Token>) -> Option<Token> {
         "NUM" => {
             Some(Token::Operator(Operator::NumberAssign))
         },
+        "CLR" => {
+            Some(Token::Operator(Operator::ColorAssign))
+        },
         _ => {
             None
         },
@@ -402,14 +493,14 @@ fn assemble_token(raw: &str, context: &Vec<Token>) -> Option<Token> {
             Some(Token::Identifier(raw.to_owned()))
         },
         Token::Operator(Operator::Foreground) => {
-            if raw.chars().next().unwrap() == '#' {
+            if raw.chars().next().unwrap().is_ascii_digit() {
                 Some(Token::Literal(raw.to_owned()))
             } else {
                 Some(Token::Identifier(raw.to_owned()))
             }
         },
         Token::Operator(Operator::Background) => {
-            if raw.chars().next().unwrap() == '#' {
+            if raw.chars().next().unwrap().is_ascii_digit() {
                 Some(Token::Literal(raw.to_owned()))
             } else {
                 Some(Token::Identifier(raw.to_owned()))
@@ -439,6 +530,9 @@ fn assemble_token(raw: &str, context: &Vec<Token>) -> Option<Token> {
             Some(Token::Identifier(raw.to_owned()))
         },
         Token::Operator(Operator::NumberAssign) => {
+            Some(Token::Identifier(raw.to_owned()))
+        },
+        Token::Operator(Operator::ColorAssign) => {
             Some(Token::Identifier(raw.to_owned()))
         },
         _ => {
@@ -476,9 +570,42 @@ fn assemble_token(raw: &str, context: &Vec<Token>) -> Option<Token> {
         Token::Operator(Operator::NumberAssign) => {
             Some(Token::Literal(raw.to_owned()))
         },
+        Token::Operator(Operator::ColorAssign) => {
+            Some(Token::Literal(raw.to_owned()))
+        },
         _ => {
             None
         },
+    };
+
+    // I could either have deeply-nested case/switch tests or else readable code and these little checks
+    // I chose the latter
+    if res != None {
+        return res;
+    }
+
+    res = match *context.get(context.len()-3).unwrap() {
+        Token::Operator(Operator::ColorAssign) => {
+            Some(Token::Literal(raw.to_owned()))
+        },
+        _ => {
+            None
+        }
+    };
+
+    // I could either have deeply-nested case/switch tests or else readable code and these little checks
+    // I chose the latter
+    if res != None {
+        return res;
+    }
+
+    res = match *context.get(context.len()-4).unwrap() {
+        Token::Operator(Operator::ColorAssign) => {
+            Some(Token::Literal(raw.to_owned()))
+        },
+        _ => {
+            None
+        }
     };
 
     return res;
